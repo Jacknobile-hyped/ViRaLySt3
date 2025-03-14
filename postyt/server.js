@@ -3,7 +3,8 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
-const mongoose = require('mongoose');
+const { createClient } = require('@supabase/supabase-js');
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const jwt = require('jsonwebtoken');
 const fs = require('fs');
 const path = require('path');
@@ -112,10 +113,51 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
+// Modificare la funzione per ottenere gli account dell'utente
+app.get('/api/user/accounts', authenticateToken, async (req, res) => {
+  try {
+    // Ottieni l'ID utente dal token
+    const userId = req.user.userId;
+    
+    // Array di piattaforme e nomi delle tabelle corrispondenti
+    const platforms = [
+      { name: 'youtube', table: 'Acc personali Youtube' },
+      { name: 'tiktok', table: 'Acc Personali TikTok' },
+      { name: 'facebook', table: 'Acc personali Facebook' },
+      { name: 'instagram', table: 'Acc personali Instagram' },
+      { name: 'twitter', table: 'Acc personali Twitter' },
+      { name: 'reddit', table: 'Acc personali Reddit' },
+      { name: 'snapchat', table: 'Acc personali Snapchat' }
+    ];
+    
+    // Raccogli gli account da tutte le piattaforme
+    const accounts = {};
+    
+    for (const platform of platforms) {
+      // Query per ottenere gli account di questa piattaforma per questo utente
+      const { data, error } = await supabase
+        .from(platform.table)
+        .select('id, name')
+        .eq('user_id', userId);
+      
+      if (error) throw error;
+      
+      // Formatta i dati per la risposta
+      accounts[platform.name] = data.map(acc => ({
+        accountId: acc.id.toString(),
+        accountName: acc.name
+      }));
+    }
+    
+    res.json({ accounts });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Endpoint per ottenere tutti gli account collegati dell'utente
 app.get('/api/user/accounts', authenticateToken, async (req, res) => {
   try {
-    const user = await User.findOne({ userId: req.user.userId });
     
     if (!user) {
       return res.status(404).json({ error: 'Utente non trovato' });
