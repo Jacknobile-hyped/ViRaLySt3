@@ -10,12 +10,7 @@ const path = require('path');
 
 // Importa i moduli per ciascuna piattaforma
 const youtubeService = require('./services/youtube');
-const tiktokService = require('./services/tiktok');
-const facebookService = require('./services/facebook');
-const instagramService = require('./services/instagram');
-const twitterService = require('./services/twitter');
-const redditService = require('./services/reddit');
-const snapchatService = require('./services/snapchat');
+
 
 const app = express();
 const port = process.env.PORT || 3000;
