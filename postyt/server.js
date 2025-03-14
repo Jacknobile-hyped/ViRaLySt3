@@ -16,70 +16,6 @@ const youtubeService = require('./services/youtube');
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Database connection
-mongoose.connect(process.env.MONGODB_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true
-});
-
-// Schema utente con array di account per ciascuna piattaforma
-const UserSchema = new mongoose.Schema({
-  userId: String,
-  accounts: {
-    youtube: [{
-      accountId: String,
-      accountName: String,
-      accessToken: String,
-      refreshToken: String,
-      expiryDate: Date
-    }],
-    tiktok: [{
-      accountId: String,
-      accountName: String,
-      accessToken: String,
-      refreshToken: String,
-      expiryDate: Date
-    }],
-    facebook: [{
-      accountId: String,
-      accountName: String,
-      accessToken: String,
-      refreshToken: String,
-      expiryDate: Date
-    }],
-    instagram: [{
-      accountId: String,
-      accountName: String,
-      accessToken: String,
-      refreshToken: String,
-      expiryDate: Date
-    }],
-    twitter: [{
-      accountId: String,
-      accountName: String,
-      accessToken: String,
-      refreshToken: String,
-      expiryDate: Date
-    }],
-    reddit: [{
-      accountId: String,
-      accountName: String,
-      accessToken: String,
-      refreshToken: String,
-      expiryDate: Date
-    }],
-    snapchat: [{
-      accountId: String,
-      accountName: String,
-      accessToken: String,
-      refreshToken: String,
-      expiryDate: Date
-    }]
-  }
-});
-
-const User = mongoose.model('User', UserSchema);
-
 // Middleware
 app.use(cors());
 app.use(express.json());
@@ -258,44 +194,69 @@ app.get('/oauth/:platform/callback', async (req, res) => {
     // Ottieni i token e le info dell'account
     const accountInfo = await service.handleCallback(code);
     
-    // Salva i token nel database
-    const user = await User.findOne({ userId });
+    // Determina il nome della tabella corretta in base alla piattaforma
+    let tableName = '';
+    switch (platform) {
+      case 'youtube':
+        tableName = 'Acc personali Youtube';
+        break;
+      case 'tiktok':
+        tableName = 'Acc Personali TikTok';
+        break;
+      case 'facebook':
+        tableName = 'Acc personali Facebook';
+        break;
+      case 'instagram':
+        tableName = 'Acc personali Instagram';
+        break;
+      case 'twitter':
+        tableName = 'Acc personali Twitter';
+        break;
+      case 'reddit':
+        tableName = 'Acc personali Reddit';
+        break;
+      case 'snapchat':
+        tableName = 'Acc personali Snapchat';
+        break;
+    }
     
-    if (!user) {
-      // Crea nuovo utente
-      const newUser = new User({
-        userId,
-        accounts: {
-          youtube: [],
-          tiktok: [],
-          facebook: [],
-          instagram: [],
-          twitter: [],
-          reddit: [],
-          snapchat: []
-        }
-      });
-      
-      newUser.accounts[platform].push(accountInfo);
-      await newUser.save();
+    // Verifica se l'account esiste già
+    const { data: existingAccount, error: queryError } = await supabase
+      .from(tableName)
+      .select('*')
+      .eq('account_id', accountInfo.accountId)
+      .eq('user_id', userId);
+    
+    if (queryError) throw queryError;
+    
+    if (existingAccount && existingAccount.length > 0) {
+      // Aggiorna l'account esistente
+      const { error: updateError } = await supabase
+        .from(tableName)
+        .update({
+          name: accountInfo.accountName,
+          access_token: accountInfo.accessToken,
+          refresh_token: accountInfo.refreshToken || existingAccount[0].refresh_token,
+          expiry_date: accountInfo.expiryDate
+        })
+        .eq('account_id', accountInfo.accountId)
+        .eq('user_id', userId);
+        
+      if (updateError) throw updateError;
     } else {
-      // Controlla se questo account esiste già
-      const existingAccount = user.accounts[platform].findIndex(
-        acc => acc.accountId === accountInfo.accountId
-      );
-      
-      if (existingAccount >= 0) {
-        // Aggiorna i token
-        user.accounts[platform][existingAccount] = {
-          ...accountInfo,
-          refreshToken: accountInfo.refreshToken || user.accounts[platform][existingAccount].refreshToken
-        };
-      } else {
-        // Aggiungi nuovo account
-        user.accounts[platform].push(accountInfo);
-      }
-      
-      await user.save();
+      // Inserisci nuovo account
+      const { error: insertError } = await supabase
+        .from(tableName)
+        .insert({
+          user_id: userId,
+          account_id: accountInfo.accountId,
+          name: accountInfo.accountName,
+          access_token: accountInfo.accessToken,
+          refresh_token: accountInfo.refreshToken,
+          expiry_date: accountInfo.expiryDate
+        });
+        
+      if (insertError) throw insertError;
     }
     
     // Reindirizza alla tua app
@@ -326,13 +287,6 @@ app.post('/api/upload', authenticateToken, upload.single('video'), async (req, r
       return res.status(400).json({ error: 'Nessun account specificato' });
     }
     
-    // Recupera l'utente
-    const user = await User.findOne({ userId: req.user.userId });
-    
-    if (!user) {
-      return res.status(404).json({ error: 'Utente non trovato' });
-    }
-    
     const results = {
       overall: { success: true },
       platforms: {}
@@ -349,55 +303,92 @@ app.post('/api/upload', authenticateToken, upload.single('video'), async (req, r
       
       results.platforms[platform] = { accountResults: [] };
       
-      // Selezione del servizio
-      let service;
+      // Determina il nome della tabella Supabase
+      let tableName;
       switch (platform) {
         case 'youtube':
+          tableName = 'Acc personali Youtube';
           service = youtubeService;
           break;
         case 'tiktok':
-          service = tiktokService;
-          break;
+          tableName = 'Acc Personali TikTok';
+          // service = tiktokService; // Commentato perché non è ancora implementato
+          results.platforms[platform].error = 'Piattaforma non ancora implementata';
+          continue;
         case 'facebook':
-          service = facebookService;
-          break;
+          tableName = 'Acc personali Facebook';
+          // service = facebookService;
+          results.platforms[platform].error = 'Piattaforma non ancora implementata';
+          continue;
         case 'instagram':
-          service = instagramService;
-          break;
+          tableName = 'Acc personali Instagram';
+          // service = instagramService;
+          results.platforms[platform].error = 'Piattaforma non ancora implementata';
+          continue;
         case 'twitter':
-          service = twitterService;
-          break;
+          tableName = 'Acc personali Twitter';
+          // service = twitterService;
+          results.platforms[platform].error = 'Piattaforma non ancora implementata';
+          continue;
         case 'reddit':
-          service = redditService;
-          break;
+          tableName = 'Acc personali Reddit';
+          // service = redditService;
+          results.platforms[platform].error = 'Piattaforma non ancora implementata';
+          continue;
         case 'snapchat':
-          service = snapchatService;
-          break;
+          tableName = 'Acc personali Snapchat';
+          // service = snapchatService;
+          results.platforms[platform].error = 'Piattaforma non ancora implementata';
+          continue;
         default:
           results.platforms[platform].error = 'Piattaforma non supportata';
           continue;
       }
+
+      // Recupera gli account selezionati da Supabase
+      const { data: platformAccounts, error } = await supabase
+        .from(tableName)
+        .select('*')
+        .eq('user_id', req.user.userId)
+        .in('id', accounts[platform]);
+      
+      if (error) {
+        results.platforms[platform].error = error.message;
+        results.overall.success = false;
+        continue;
+      }
+      
+      if (!platformAccounts || platformAccounts.length === 0) {
+        results.platforms[platform].error = 'Nessun account trovato';
+        results.overall.success = false;
+        continue;
+      }
       
       // Processa ogni account per questa piattaforma
-      for (const accountId of accounts[platform]) {
+      for (const accountInfo of platformAccounts) {
         try {
-          // Trova l'account dell'utente
-          const accountInfo = user.accounts[platform].find(acc => acc.accountId === accountId);
-          
-          if (!accountInfo) {
-            results.platforms[platform].accountResults.push({
-              accountId,
-              success: false,
-              error: 'Account non trovato'
-            });
-            continue;
-          }
-          
-          // Aggiorna token se necessario
-          if (accountInfo.expiryDate && Date.now() > accountInfo.expiryDate) {
-            const newTokens = await service.refreshToken(accountInfo.refreshToken);
-            accountInfo.accessToken = newTokens.accessToken;
-            accountInfo.expiryDate = newTokens.expiryDate;
+          // Verifica se è necessario aggiornare il token
+          const expiryDate = new Date(accountInfo.expiry_date);
+          if (expiryDate && Date.now() > expiryDate) {
+            try {
+              const newTokens = await service.refreshToken(accountInfo.refresh_token);
+              
+              // Aggiorna i token nell'account
+              const { error: updateError } = await supabase
+                .from(tableName)
+                .update({
+                  access_token: newTokens.accessToken,
+                  expiry_date: newTokens.expiryDate
+                })
+                .eq('id', accountInfo.id);
+              
+              if (updateError) throw updateError;
+              
+              // Aggiorna il token in memoria per questo upload
+              accountInfo.access_token = newTokens.accessToken;
+            } catch (refreshError) {
+              throw new Error(`Errore durante l'aggiornamento del token: ${refreshError.message}`);
+            }
           }
           
           // Carica il video
@@ -406,19 +397,20 @@ app.post('/api/upload', authenticateToken, upload.single('video'), async (req, r
             title,
             description,
             tags: tags ? tags.split(',') : [],
-            accessToken: accountInfo.accessToken
+            accessToken: accountInfo.access_token
           });
           
           results.platforms[platform].accountResults.push({
-            accountId,
-            accountName: accountInfo.accountName,
+            accountId: accountInfo.id,
+            accountName: accountInfo.name,
             success: true,
             videoId: uploadResult.videoId,
             videoUrl: uploadResult.videoUrl
           });
         } catch (error) {
           results.platforms[platform].accountResults.push({
-            accountId,
+            accountId: accountInfo.id,
+            accountName: accountInfo.name,
             success: false,
             error: error.message
           });
@@ -430,9 +422,6 @@ app.post('/api/upload', authenticateToken, upload.single('video'), async (req, r
         }
       }
     }
-    
-    // Salva eventuali token aggiornati
-    await user.save();
     
     // Pulisci il file temporaneo
     fs.unlinkSync(videoPath);
